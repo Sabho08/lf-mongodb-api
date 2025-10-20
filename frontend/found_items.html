@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Available Found Items</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+    <!-- Custom Tailwind Configuration (Colors) -->
+    <script src="tailwind_config.js"></script>
+    <!-- Custom Styles (Scrollbar, Button) -->
+    <link rel="stylesheet" href="style.css">
+    
+    <script>
+        window.onload = function() {
+            lucide.createIcons();
+        };
+
+        const setupFirebase = () => {
+            console.log("Firebase setup initiated...");
+            // FIREBASE INITIALIZATION BOILERPLATE (will be fully implemented later)
+        }
+
+        const openClaimModal = (itemName, itemLocation) => {
+            // Placeholder for opening claim modal (this page currently doesn't link to the modal,
+            // but the function is here for future expansion if needed.)
+            console.log(`Opening claim for: ${itemName} found at ${itemLocation}`);
+        }
+    </script>
+</head>
+<body class="min-h-screen">
+
+    <!-- Header / Navigation Bar -->
+    <header class="sticky top-0 z-50 bg-rich-black shadow-lg border-b border-midnight-green/50">
+        <nav class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
+            <a href="index.html" class="text-beige-light text-2xl font-bold flex items-center">
+                <i data-lucide="archive" class="w-6 h-6 mr-2 text-air-force-blue"></i>
+                College L&F
+            </a>
+            <div class="flex space-x-4">
+                <a href="index.html" class="px-3 py-2 rounded-lg text-ash-gray font-medium hover:bg-midnight-green/50 transition duration-200">
+                    <i data-lucide="layout-dashboard" class="w-4 h-4 mr-1 inline-block"></i> Dashboard
+                </a>
+                <a href="found_items.html" class="px-3 py-2 rounded-lg text-beige-light font-medium bg-air-force-blue/20 border-b-2 border-air-force-blue transition duration-200 hover:bg-air-force-blue/50">
+                    <i data-lucide="locate-fixed" class="w-4 h-4 mr-1 inline-block"></i> Found Items
+                </a>
+                <a href="report_lost.html" class="px-3 py-2 rounded-lg text-ash-gray font-medium hover:bg-midnight-green/50 transition duration-200">
+                    <i data-lucide="frown" class="w-4 h-4 mr-1 inline-block"></i> Report Lost
+                </a>
+                <a href="report_found.html" class="px-3 py-2 rounded-lg text-ash-gray font-medium hover:bg-midnight-green/50 transition duration-200">
+                    <i data-lucide="smile" class="w-4 h-4 mr-1 inline-block"></i> Report Found
+                </a>
+                <a href="my_tickets.html" class="px-3 py-2 rounded-lg text-ash-gray font-medium hover:bg-midnight-green/50 transition duration-200">
+                    <i data-lucide="clipboard-list" class="w-4 h-4 mr-1 inline-block"></i> My Claims
+                </a>
+            </div>
+        </nav>
+    </header>
+
+    <!-- Main Content Area -->
+    <main class="max-w-6xl mx-auto p-4 sm:p-6 lg:p-8">
+        <h1 class="text-3xl font-extrabold text-beige-light mb-4 text-center">
+            <i data-lucide="search" class="w-7 h-7 inline-block text-air-force-blue mr-2"></i> Items Reported Found
+        </h1>
+        <p class="text-center text-ash-gray mb-6">Browse items that have been found on campus and click to submit a claim ticket.</p>
+
+        <!-- Search Button (Always visible) -->
+        <div class="flex justify-center mb-8">
+            <button id="search-toggle-btn" onclick="toggleSearchBar()" class="bg-air-force-blue/20 text-beige-light p-3 rounded-full hover:bg-air-force-blue/50 transition duration-200">
+                <i data-lucide="search" class="w-6 h-6"></i>
+            </button>
+        </div>
+
+        <!-- Animated Search Bar (Initially Hidden) -->
+        <form id="search-form" class="search-bar hidden mb-6" onsubmit="event.preventDefault()">
+            <input id="search-input-field" class="search-input" required="" name="search" type="search" autocomplete="off">
+            <button type="submit" class="search-btn">
+                <span>Search</span>
+            </button>
+        </form>
+
+        <!-- Item Grid -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+
+            <!-- Sidebar Filter -->
+            <div class="md:col-span-1">
+                <h3 class="text-xl font-semibold mb-4 text-beige-light border-b border-midnight-green pb-2">Filter by Category</h3>
+                <div class="sidebar-list">
+                    <button class="value active-filter" onclick="filterItems('All')">
+                        <i data-lucide="package"></i> All Items
+                    </button>
+                    <button class="value" onclick="filterItems('Electronics')">
+                        <i data-lucide="laptop"></i> Electronics
+                    </button>
+                    <button class="value" onclick="filterItems('Bags')">
+                        <i data-lucide="briefcase"></i> Bags & Backpacks
+                    </button>
+                    <button class="value" onclick="filterItems('Keys')">
+                        <i data-lucide="key"></i> Keys
+                    </button>
+                    <button class="value" onclick="filterItems('Apparel')">
+                        <i data-lucide="shirt"></i> Apparel (Clothing)
+                    </button>
+                    <button class="value" onclick="filterItems('Documents')">
+                        <i data-lucide="file-text"></i> Documents/IDs
+                    </button>
+                    <button class="value" onclick="filterItems('Other')">
+                        <i data-lucide="more-horizontal"></i> Other
+                    </button>
+                </div>
+            </div>
+
+            <!-- Item Grid (3 columns) -->
+            <div id="item-grid" class="md:col-span-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+
+                <!-- FOUND ITEM 1: Laptop -->
+                <div onclick="openClaimModal('MacBook Pro', 'Library Main Desk')" 
+                    class="relative group cursor-pointer overflow-hidden duration-500 w-full h-80 bg-midnight-green text-ash-gray p-5 rounded-xl shadow-xl">
+                    <div class="relative">
+                        <div class="absolute top-0 right-0 bg-air-force-blue/50 text-beige-light text-xs font-semibold px-2 py-1 rounded-bl-lg">
+                            Electronics
+                        </div>
+                        <div class="group-hover:scale-110 w-full h-40 bg-air-force-blue/50 duration-500 rounded-lg flex items-center justify-center">
+                             <i data-lucide="laptop" class="w-16 h-16 text-beige-light"></i>
+                        </div>
+                        <div class="absolute w-full left-0 p-5 -bottom-24 duration-500 group-hover:-translate-y-12">
+                            <div class="absolute -z-10 left-0 w-full h-28 opacity-0 duration-500 group-hover:opacity-80 group-hover:bg-rich-black/70 rounded-lg"></div>
+                            <span class="text-xl font-bold text-beige-light relative z-10">Silver Laptop</span>
+                            <p class="group-hover:opacity-100 text-sm w-full duration-500 opacity-0 relative z-10 mt-1">
+                                **Found Location:** Library Main Desk
+                                <br>**Key Feature:** Has a small dent on the corner.
+                            </p>
+                            <button class="mt-2 text-sm text-air-force-blue font-semibold relative z-10">
+                                Click to Claim
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- FOUND ITEM 2: Red Scarf -->
+                <div onclick="openClaimModal('Red Wool Scarf', 'Cafeteria Table 4')" 
+                    class="relative group cursor-pointer overflow-hidden duration-500 w-full h-80 bg-midnight-green text-ash-gray p-5 rounded-xl shadow-xl">
+                    <div class="relative">
+                        <div class="absolute top-0 right-0 bg-air-force-blue/50 text-beige-light text-xs font-semibold px-2 py-1 rounded-bl-lg">
+                            Apparel
+                        </div>
+                        <div class="group-hover:scale-110 w-full h-40 bg-air-force-blue/50 duration-500 rounded-lg flex items-center justify-center">
+                             <i data-lucide="shirt" class="w-16 h-16 text-beige-light"></i>
+                        </div>
+                        <div class="absolute w-full left-0 p-5 -bottom-24 duration-500 group-hover:-translate-y-12">
+                            <div class="absolute -z-10 left-0 w-full h-28 opacity-0 duration-500 group-hover:opacity-80 group-hover:bg-rich-black/70 rounded-lg"></div>
+                            <span class="text-xl font-bold text-beige-light relative z-10">Red Wool Scarf</span>
+                            <p class="group-hover:opacity-100 text-sm w-full duration-500 opacity-0 relative z-10 mt-1">
+                                **Found Location:** Cafeteria Table 4
+                                <br>**Key Feature:** Fringed ends.
+                            </p>
+                            <button class="mt-2 text-sm text-air-force-blue font-semibold relative z-10">
+                                Click to Claim
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- FOUND ITEM 3: Notebook -->
+                <div onclick="openClaimModal('Spiral Notebook', 'Classroom A201')" 
+                    class="relative group cursor-pointer overflow-hidden duration-500 w-full h-80 bg-midnight-green text-ash-gray p-5 rounded-xl shadow-xl">
+                    <div class="relative">
+                        <div class="absolute top-0 right-0 bg-air-force-blue/50 text-beige-light text-xs font-semibold px-2 py-1 rounded-bl-lg">
+                            Documents
+                        </div>
+                        <div class="group-hover:scale-110 w-full h-40 bg-air-force-blue/50 duration-500 rounded-lg flex items-center justify-center">
+                             <i data-lucide="book-open" class="w-16 h-16 text-beige-light"></i>
+                        </div>
+                        <div class="absolute w-full left-0 p-5 -bottom-24 duration-500 group-hover:-translate-y-12">
+                            <div class="absolute -z-10 left-0 w-full h-28 opacity-0 duration-500 group-hover:opacity-80 group-hover:bg-rich-black/70 rounded-lg"></div>
+                            <span class="text-xl font-bold text-beige-light relative z-10">Physics Notebook</span>
+                            <p class="group-hover:opacity-100 text-sm w-full duration-500 opacity-0 relative z-10 mt-1">
+                                **Found Location:** Classroom A201
+                                <br>**Key Feature:** Black cover, half-filled.
+                            </p>
+                            <button class="mt-2 text-sm text-air-force-blue font-semibold relative z-10">
+                                Click to Claim
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+            </div> <!-- End Item Grid -->
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="w-full py-4 text-center text-sm text-ash-gray border-t border-midnight-green/50 mt-8">
+        &copy; 2025 College Lost & Found Platform. Professional Beta.
+    </footer>
+
+</body>
+</html>

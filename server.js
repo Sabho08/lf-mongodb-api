@@ -92,6 +92,20 @@ async function run() {
             }
         });
 
+        // GET /api/claims - Fetch mock claim tickets for the frontend display
+        app.get('/api/claims', async (req, res) => {
+            // NOTE: In a production app, this would fetch filtered data from a 'claims' collection
+            // and would require user authentication.
+
+            // Returning mock data to allow frontend rendering to work:
+            const mockClaims = [
+                { id: "001", itemName: "Black Backpack", itemID: "45A9", status: "verified", date: new Date().toISOString() },
+                { id: "002", itemName: "Silver Key Set", itemID: "B17D", status: "pending", date: new Date(Date.now() - 86400000).toISOString() },
+                { id: "003", itemName: "Green Jacket", itemID: "F90C", status: "rejected", date: new Date(Date.now() - (2 * 86400000)).toISOString() },
+            ];
+            res.status(200).json(mockClaims);
+        });
+
         // --------------------------------------------------
         // Fallback Route (404)
         // --------------------------------------------------

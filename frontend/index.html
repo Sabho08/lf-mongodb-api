@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - Lost & Found</title>
+    <!-- Load Tailwind CSS from CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Custom Tailwind Configuration (Must load before custom styles) -->
+    <script src="tailwind_config.js"></script>
+    <!-- Custom Stylesheet -->
+    <link rel="stylesheet" href="style.css">
+
+   <script>
+    // --- MONGODB API UTILITIES ---
+    const API_BASE_URL = window.location.origin; 
+
+    let currentClaimItemId = null; // Stores the ID of the item being claimed
+    window.itemDescriptionToClaim = ''; // Global storage for the description
+
+    // Utility mapping for icons
+    function getIconName(category) {
+        switch (category.toLowerCase()) {
+            case 'electronics': return 'laptop';
+            case 'bags': return 'briefcase';
+            case 'keys': return 'key';
+            case 'apparel': return 'shirt';
+            case 'documents': return 'file-text';
+            default: return 'package';
+        }
+    }
+
+    // Utility to convert File object to Base64 string for Gemini API
+    function fileToBase64(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result.split(',')[1]);
+            reader.onerror = error => reject(error);
+            reader.readAsDataURL(file);
+        });
+    }
+
+    // Calls Gemini Vision Model for verification
+    async function runGeminiVerification(itemDescription, proofBase64) {
+        const apiKey = ""; 
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+
+        const systemPrompt = `You are a strict, objective AI claim verifier. Your task is to compare a claimant's uploaded "PROOF IMAGE" against the detailed "LOST ITEM DESCRIPTION" provided by the original reporter.
+        Output a score (0-100) indicating the match confidence, followed by a concise 1-2 sentence justification.
+        Focus strictly on visual details (color, texture, unique features) mentioned in the description versus what is visible in the image.
+
+        Example Output:
+        Score: 85
+        Justification: The image clearly shows a dark blue backpack with a missing zipper pull, matching the description exactly.
+
+        If the image is irrelevant or doesn't match the details, output a low score.`;
+
+        const userQuery = `LOST ITEM DESCRIPTION: ${itemDescription}. 
+        Based on the PROOF IMAGE, score the visual match confidence (0-100) and provide a justification.`;
+
+        const payload = {
+            contents: [{
+                parts: [
+                    { text: userQuery },
+                    {
+                        inlineData: {
+                            mimeType: "image/jpeg", // Assuming common image type
+                            data: proofBase64
+                        }
+                    }
+                ]
+            }],
+            systemInstruction: {
+                parts: [{ text: systemPrompt }]
+            }
+        };
+
+        const response = await fetch(apiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+            throw new Error(`Gemini API call failed: ${response.statusText}`);
+        }
+
+        const result = await response.json();
+        return result.candidates?.[0]?.content?.parts?.[0]?.text || "Verification failed to return text.";
+    }
+
+
+    // Fetches all lost items from the hypothetical MongoDB API
+    async function fetchLostItems() {
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/lost_items`);
+            if (!response.ok) throw new Error('Failed to fetch items from API.');
+
+            const items = await response.json();
+            renderItems(items);
+        } catch (error) {
+            console.error("MongoDB API fetch error:", error);
+            document.getElementById('item-grid-cards').innerHTML = `<p class="md:col-span-3 text-red-500 text-center p-8">Error loading items: API is unavailable or misconfigured.</p>`;
+        }
+    }
+
+    // Renders the item cards from API data
+    function renderItems(items) {
+        const itemGrid = document.getElementById('item-grid-cards');
+        itemGrid.innerHTML = ''; // Clear existing items
+
+        if (!Array.isArray(items) || items.length === 0) {
+            itemGrid.innerHTML = '<p class="md:col-span-3 text-ash-gray text-center p-8">No lost items have been reported yet. Be the first!</p>';
+            lucide.createIcons();
+            return;
+        }
+
+        items.forEach(item => {
+            // Ensure MongoDB ID (_id) is used as the unique ID
+            const itemId = item._id || Date.now(); 
+            const iconName = getIconName(item.category || 'Other');
+            const itemDetails = `Location: ${item.location || 'Unknown'} | Reported: ${new Date(item.timestamp).toLocaleDateString()}`;
+
+            const cardHtml = `
+                <div onclick="openClaimModal('${itemId}', '${item.name}', '${itemDetails}', '${item.description}')"
+                    class="relative group cursor-pointer overflow-hidden duration-500
+                    w-full h-80 bg-midnight-green text-ash-gray p-5 rounded-xl shadow-xl item-card"
+                    data-category="${item.category}">
+
+                    <div class="relative">
+                        <span class="absolute top-0 right-0 px-2 py-1 text-xs font-semibold rounded-bl-lg bg-air-force-blue text-beige-light">${item.category}</span>
+                        <!-- Image/Icon Area (Visible by default, scales on hover) -->
+                        <div class="group-hover:scale-110 w-full h-40 bg-air-force-blue/50 duration-500 rounded-lg flex items-center justify-center">
+                            <i data-lucide="${iconName}" class="w-16 h-16 text-beige-light"></i>
+                        </div>
+
+                        <!-- Title & Info Area (Starts hidden, slides up on hover) -->
+                        <div class="absolute w-full left-0 p-5 -bottom-24 duration-500 group-hover:-translate-y-12">
+                            <div class="absolute -z-10 left-0 w-full h-28 opacity-0 duration-500 group-hover:opacity-70 group-hover:bg-rich-black/90 rounded-b-xl"></div>
+                            <span class="text-xl font-bold text-beige-light">${item.name}</span>
+
+                            <p class="group-hover:opacity-100 w-full duration-500 opacity-0 text-sm mt-3">
+                                <strong>Description:</strong> ${item.description.substring(0, 50)}...
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            `;
+            itemGrid.insertAdjacentHTML('beforeend', cardHtml);
+        });
+
+        lucide.createIcons();
+    }
+
+
+    // --- UI HELPER FUNCTIONS ---
+
+    function openClaimModal(itemId, itemName, itemDetails, itemDescription) {
+        currentClaimItemId = itemId;
+        window.itemDescriptionToClaim = itemDescription; // Store for verification
+
+        document.getElementById('claim-item-name').textContent = itemName;
+        document.getElementById('claim-item-details').textContent = itemDetails;
+        document.getElementById('claim-description-modal').textContent = itemDescription; // Display full description
+        
+        document.getElementById('claim-modal').classList.remove('hidden');
+        
+        // Reset modal state to step 1
+        document.getElementById('claim-step-1').classList.remove('hidden');
+        document.getElementById('claim-step-2').classList.add('hidden');
+        document.getElementById('ai-status').textContent = 'Pending Verification';
+        document.getElementById('ai-status').className = 'text-ash-gray';
+        document.getElementById('claim-ticket-btn').classList.add('hidden');
+        document.getElementById('upload-proof').value = '';
+        document.getElementById('ai-spinner').classList.add('hidden');
+        document.getElementById('claim-justification').textContent = '';
+    }
+
+    function closeClaimModal() {
+        document.getElementById('claim-modal').classList.add('hidden');
+    }
+
+    async function startVerification() {
+        const proofFile = document.getElementById('upload-proof').files[0];
+        if (!proofFile) {
+            console.error("Please upload an image of your proof item."); 
+            return;
+        }
+
+        document.getElementById('claim-step-1').classList.add('hidden');
+        document.getElementById('claim-step-2').classList.remove('hidden');
+
+        document.getElementById('ai-status').textContent = 'Running AI Verification...';
+        document.getElementById('ai-status').className = 'text-air-force-blue';
+        document.getElementById('ai-spinner').classList.remove('hidden');
+        document.getElementById('claim-justification').textContent = 'The AI is comparing your image against the reported description...';
+
+
+        try {
+            const proofBase64 = await fileToBase64(proofFile);
+            const verificationResult = await runGeminiVerification(window.itemDescriptionToClaim, proofBase64);
+            
+            document.getElementById('ai-spinner').classList.add('hidden');
+            
+            // Parse the score and justification from the Gemini response
+            const scoreMatch = verificationResult.match(/Score:\s*(\d+)/i);
+            const score = scoreMatch ? parseInt(scoreMatch[1], 10) : 0;
+            
+            const justification = verificationResult.split('Justification:')[1] ? verificationResult.split('Justification:')[1].trim() : 'AI output not clear.';
+            
+            document.getElementById('claim-justification').textContent = justification;
+
+            if (score >= 70) {
+                document.getElementById('ai-status').textContent = `Verification SUCCESS! Score: ${score}%`;
+                document.getElementById('ai-status').className = 'text-green-500';
+                document.getElementById('claim-ticket-btn').classList.remove('hidden');
+            } else {
+                document.getElementById('ai-status').textContent = `Verification FAILED. Score: ${score}%`;
+                document.getElementById('ai-status').className = 'text-red-500';
+                document.getElementById('claim-ticket-btn').classList.add('hidden');
+            }
+
+        } catch(e) {
+            document.getElementById('ai-spinner').classList.add('hidden');
+            document.getElementById('ai-status').textContent = `Verification Error. Check Console.`;
+            document.getElementById('ai-status').className = 'text-red-500';
+            document.getElementById('claim-justification').textContent = 'An error occurred during the API call.';
+            console.error("Gemini Verification Error:", e);
+        }
+    }
+
+    function submitClaimTicket() {
+        // Placeholder for actual claim submission to MongoDB API (e.g., /api/claims)
+        console.log("Claim ticket submitted successfully for Item ID:", currentClaimItemId);
+        closeClaimModal();
+    }
+
+    function filterItems(category) {
+        const buttons = document.querySelectorAll('.sidebar-list .value');
+        buttons.forEach(btn => btn.classList.remove('active-filter'));
+
+        const activeButton = Array.from(buttons).find(btn => btn.textContent.includes(category) || category === 'All');
+        if (activeButton) {
+            activeButton.classList.add('active-filter');
+        }
+
+        const cards = document.querySelectorAll('#item-grid-cards > div');
+        cards.forEach(card => {
+            const cardCategory = card.getAttribute('data-category');
+            if (category === 'All' || cardCategory === category) {
+                card.style.display = 'block';
+            } else {
+                card.style.display = 'none';
+            }
+        });
+    }
+
+    function toggleSearchBar() {
+        const searchForm = document.getElementById('search-form');
+        const searchInput = document.getElementById('search-input-field');
+        const toggleBtn = document.getElementById('search-toggle-btn').querySelector('i');
+
+        if (searchForm.classList.contains('hidden')) {
+            searchForm.classList.remove('hidden');
+            toggleBtn.setAttribute('data-lucide', 'x');
+            
+            searchInput.focus();
+            searchInput.value = ' ';
+            
+        } else {
+            searchInput.blur();
+            searchInput.value = '';
+            toggleBtn.setAttribute('data-lucide', 'search');
+            
+            setTimeout(() => {
+                searchForm.classList.add('hidden');
+            }, 400); 
+        }
+        lucide.createIcons();
+    }
+
+    function toggleMobileMenu() {
+        const menu = document.getElementById('mobile-menu');
+        const icon = document.getElementById('menu-toggle').querySelector('i');
+        if (menu.classList.contains('hidden')) {
+            menu.classList.remove('hidden');
+            icon.setAttribute('data-lucide', 'x');
+        } else {
+            menu.classList.add('hidden');
+            icon.setAttribute('data-lucide', 'menu');
+        }
+        lucide.createIcons();
+    }
+
+
+    // Initialization: Start Polling for new data (simulating real-time)
+    document.addEventListener('DOMContentLoaded', () => {
+        // Start fetching data immediately
+        fetchLostItems(); 
+        // Set up polling interval
+        setInterval(fetchLostItems, 5000); 
+        
+        // Initial rendering of icons
+        lucide.createIcons();
+    });
+</script>
+
+</head>
+
+<body class="bg-rich-black min-h-screen font-sans">
+
+    <!-- Header & Navigation -->
+    <header class="sticky top-0 z-50 bg-rich-black shadow-lg border-b border-midnight-green/50">
+        <nav class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
+            <!-- App Logo/Title -->
+            <a href="index.html" class="text-beige-light text-2xl font-bold flex items-center">
+                <i data-lucide="archive" class="w-6 h-6 mr-2 text-air-force-blue"></i>
+                College L&F
+            </a>
+
+            <!-- Desktop Navigation Links -->
+            <div class="hidden md:flex space-x-4">
+                <!-- Active link -->
+                <a href="index.html" class="px-3 py-2 rounded-lg text-beige-light font-medium bg-air-force-blue/20 border-b-2 border-air-force-blue transition duration-200 hover:bg-air-force-blue/50">
+                    <i data-lucide="layout-dashboard" class="w-4 h-4 mr-1 inline-block"></i> Dashboard
+                </a>
+                <a href="claimed_items.html" class="px-3 py-2 rounded-lg text-ash-gray font-medium hover:bg-midnight-green/50 transition duration-200">
+                    <i data-lucide="check-square" class="w-4 h-4 mr-1 inline-block"></i> Successful Claims
+                </a>
+                <a href="report_lost.html" class="px-3 py-2 rounded-lg text-ash-gray font-medium hover:bg-midnight-green/50 transition duration-200">
+                    <i data-lucide="frown" class="w-4 h-4 mr-1 inline-block"></i> Report Lost
+                </a>
+                <a href="report_found.html" class="px-3 py-2 rounded-lg text-ash-gray font-medium hover:bg-midnight-green/50 transition duration-200">
+                    <i data-lucide="smile" class="w-4 h-4 mr-1 inline-block"></i> Report Found
+                </a>
+                <a href="my_tickets.html" class="px-3 py-2 rounded-lg text-ash-gray font-medium hover:bg-midnight-green/50 transition duration-200">
+                    <i data-lucide="clipboard-list" class="w-4 h-4 mr-1 inline-block"></i> My Claims
+                </a>
+            </div>
+
+            <!-- Mobile Menu Button -->
+            <button id="menu-toggle" class="md:hidden text-beige-light focus:outline-none" onclick="toggleMobileMenu()">
+                <i data-lucide="menu" class="w-6 h-6"></i>
+            </button>
+        </nav>
+
+        <!-- Mobile Navigation Drawer -->
+        <div id="mobile-menu" class="hidden md:hidden pb-4 px-4 bg-midnight-green/90 border-t border-air-force-blue">
+            <div class="flex flex-col space-y-2">
+                <a href="index.html" class="px-3 py-2 rounded-lg text-beige-light font-medium bg-air-force-blue/20 transition duration-200">
+                    <i data-lucide="layout-dashboard" class="w-4 h-4 mr-2 inline-block"></i> Dashboard
+                </a>
+                <a href="claimed_items.html" class="px-3 py-2 rounded-lg text-ash-gray font-medium hover:bg-air-force-blue/20 transition duration-200">
+                    <i data-lucide="check-square" class="w-4 h-4 mr-2 inline-block"></i> Successful Claims
+                </a>
+                <a href="report_lost.html" class="px-3 py-2 rounded-lg text-ash-gray font-medium hover:bg-air-force-blue/20 transition duration-200">
+                    <i data-lucide="frown" class="w-4 h-4 mr-2 inline-block"></i> Report Lost
+                </a>
+                <a href="report_found.html" class="px-3 py-2 rounded-lg text-ash-gray font-medium hover:bg-air-force-blue/20 transition duration-200">
+                    <i data-lucide="smile" class="w-4 h-4 mr-2 inline-block"></i> Report Found
+                </a>
+                <a href="my_tickets.html" class="px-3 py-2 rounded-lg text-ash-gray font-medium hover:bg-air-force-blue/20 transition duration-200">
+                    <i data-lucide="clipboard-list" class="w-4 h-4 mr-2 inline-block"></i> My Claims
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <h1 class="text-4xl font-extrabold text-beige-light mb-4 border-b border-air-force-blue pb-3">Lost Items Ready to Claim</h1>
+        <p class="text-ash-gray mb-8">Review items found by others. Click 'Claim Item' to start the AI verification process.</p>
+
+        <!-- Search Bar and Filter Controls -->
+        <div class="flex flex-col items-center justify-center space-y-4 mb-8">
+
+           <!-- Search Bar Toggle Button (Mobile/Desktop) -->
+<!-- This is the ONLY button visible initially -->
+<button id="search-toggle-btn" onclick="toggleSearchBar()"
+    class="p-3 bg-air-force-blue rounded-full text-beige-light hover:bg-air-force-blue/80 transition duration-300 shadow-lg">
+    <i data-lucide="search" class="w-6 h-6"></i>
+</button>
+
+<!-- Search Bar Form (Hidden by default, contains the actual search input and button) -->
+<div id="search-form" class="hidden w-full max-w-lg mx-auto px-4">
+    <form class="search-bar" action="">
+        <input id="search-input-field" class="search-input" required="" name="search" type="search" autocomplete="off">
+        <button type="submit" class="search-btn">
+            <span>Search</span>
+        </button>
+    </form>
+</div>
+
+            <!-- Category Filter (Visible only on mobile for quick filtering) -->
+            <div class="w-full max-w-xs md:hidden px-4">
+                <label for="category" class="block text-ash-gray font-semibold mb-2 text-center">Filter (Mobile)</label>
+                <select id="category"
+                    class="w-full p-3 rounded-lg bg-rich-black text-beige-light border border-air-force-blue focus:ring-1 focus:ring-beige-light appearance-none">
+                    <option value="All">All Categories</option>
+                    <option value="Electronics">Electronics</option>
+                    <option value="Bags">Bags & Backpacks</option>
+                    <option value="Keys">Keys</option>
+                    <option value="Apparel">Apparel (Clothing)</option>
+                    <option value="Documents">Documents/IDs</option>
+                    <option value="Other">Other</option>
+                </select>
+            </div>
+        </div>
+
+
+        <!-- Item Grid -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+
+            <!-- Sidebar Filter (Desktop Only) -->
+            <div class="hidden md:col-span-1 md:block">
+                <h3 class="text-xl font-semibold mb-4 text-beige-light border-b border-midnight-green pb-2">Filter by Category</h3>
+                <div class="sidebar-list">
+                    <button class="value active-filter bg-air-force-blue/50" onclick="filterItems('All')">
+                        <i data-lucide="package"></i> All Items
+                    </button>
+                    <button class="value" onclick="filterItems('Electronics')">
+                        <i data-lucide="laptop"></i> Electronics
+                    </button>
+                    <button class="value" onclick="filterItems('Bags')">
+                        <i data-lucide="briefcase"></i> Bags & Backpacks
+                    </button>
+                    <button class="value" onclick="filterItems('Keys')">
+                        <i data-lucide="key"></i> Keys
+                    </button>
+                    <button class="value" onclick="filterItems('Apparel')">
+                        <i data-lucide="shirt"></i> Apparel (Clothing)
+                    </button>
+                    <button class="value" onclick="filterItems('Documents')">
+                        <i data-lucide="file-text"></i> Documents/IDs
+                    </button>
+                    <button class="value" onclick="filterItems('Other')">
+                        <i data-lucide="more-horizontal"></i> Other
+                    </button>
+                </div>
+            </div>
+
+
+            <!-- Item Cards Container -->
+            <div id="item-grid" class="md:col-span-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+
+               <!-- Mock Card 1: Electronics -->
+<div onclick="openClaimModal('MacBook Pro Charger', 'CS Lab 301 on Oct 16th')"
+    class="relative group cursor-pointer overflow-hidden duration-500 w-full h-80 bg-midnight-green text-ash-gray p-5 rounded-xl shadow-xl">
+
+    <div class="relative">
+        <span class="absolute top-0 right-0 px-2 py-1 text-xs font-semibold rounded-bl-lg bg-air-force-blue text-beige-light">Electronics</span>
+        <!-- Image/Icon Area (Visible by default, scales on hover) -->
+        <div class="group-hover:scale-110 w-full h-40 bg-air-force-blue/50 duration-500 rounded-lg flex items-center justify-center">
+             <i data-lucide="laptop" class="w-16 h-16 text-beige-light"></i>
+        </div>
+
+        <!-- Title & Info Area (Starts hidden, slides up on hover) -->
+        <div class="absolute w-full left-0 p-5 -bottom-24 duration-500 group-hover:-translate-y-12">
+            <div class="absolute -z-10 left-0 w-full h-28 opacity-0 duration-500 group-hover:opacity-70 group-hover:bg-rich-black/90 rounded-b-xl"></div>
+            <span class="text-xl font-bold text-beige-light">MacBook Pro Charger</span>
+            
+            <p class="group-hover:opacity-100 w-full duration-500 opacity-0 text-sm mt-3">
+                **Location:** CS Lab 301 <br>
+                **Condition:** Minor scuff on adapter body.
+            </p>
+        </div>
+    </div>
+</div>
+
+               <!-- Mock Card 2: Bags -->
+<div onclick="openClaimModal('Red Backpack', 'Library entrance on Oct 17th')"
+    class="relative group cursor-pointer overflow-hidden duration-500 w-full h-80 bg-midnight-green text-ash-gray p-5 rounded-xl shadow-xl">
+
+    <div class="relative">
+        <span class="absolute top-0 right-0 px-2 py-1 text-xs font-semibold rounded-bl-lg bg-air-force-blue text-beige-light">Bags</span>
+        <!-- Image/Icon Area -->
+        <div class="group-hover:scale-110 w-full h-40 bg-air-force-blue/50 duration-500 rounded-lg flex items-center justify-center">
+             <i data-lucide="briefcase" class="w-16 h-16 text-beige-light"></i>
+        </div>
+
+        <!-- Title & Info Area -->
+        <div class="absolute w-full left-0 p-5 -bottom-24 duration-500 group-hover:-translate-y-12">
+            <div class="absolute -z-10 left-0 w-full h-28 opacity-0 duration-500 group-hover:opacity-70 group-hover:bg-rich-black/90 rounded-b-xl"></div>
+            <span class="text-xl font-bold text-beige-light">Red Backpack</span>
+            
+            <p class="group-hover:opacity-100 w-full duration-500 opacity-0 text-sm mt-3">
+                **Location:** Library Entrance <br>
+                **Condition:** Single missing zipper pull.
+            </p>
+        </div>
+    </div>
+</div>
+              <!-- Mock Card 3: Keys -->
+<div onclick="openClaimModal('Silver Key Ring', 'Student Union Cafeteria')"
+    class="relative group cursor-pointer overflow-hidden duration-500 w-full h-80 bg-midnight-green text-ash-gray p-5 rounded-xl shadow-xl">
+
+    <div class="relative">
+        <span class="absolute top-0 right-0 px-2 py-1 text-xs font-semibold rounded-bl-lg bg-air-force-blue text-beige-light">Keys</span>
+        <!-- Image/Icon Area -->
+        <div class="group-hover:scale-110 w-full h-40 bg-air-force-blue/50 duration-500 rounded-lg flex items-center justify-center">
+             <i data-lucide="key" class="w-16 h-16 text-beige-light"></i>
+        </div>
+
+        <!-- Title & Info Area -->
+        <div class="absolute w-full left-0 p-5 -bottom-24 duration-500 group-hover:-translate-y-12">
+            <div class="absolute -z-10 left-0 w-full h-28 opacity-0 duration-500 group-hover:opacity-70 group-hover:bg-rich-black/90 rounded-b-xl"></div>
+            <span class="text-xl font-bold text-beige-light">Silver Key Ring</span>
+            
+            <p class="group-hover:opacity-100 w-full duration-500 opacity-0 text-sm mt-3">
+                **Location:** Cafeteria Table 4 <br>
+                **Condition:** Has one campus door key and two small keys.
+            </p>
+        </div>
+    </div>
+</div>
+<!-- Mock Card 4: Apparel -->
+<div onclick="openClaimModal('Grey Hooded Jacket', 'Found near the Gymnasium entrance')"
+    class="relative group cursor-pointer overflow-hidden duration-500 w-full h-80 bg-midnight-green text-ash-gray p-5 rounded-xl shadow-xl">
+
+    <div class="relative">
+        <span class="absolute top-0 right-0 px-2 py-1 text-xs font-semibold rounded-bl-lg bg-air-force-blue text-beige-light">Apparel</span>
+        <!-- Image/Icon Area -->
+        <div class="group-hover:scale-110 w-full h-40 bg-air-force-blue/50 duration-500 rounded-lg flex items-center justify-center">
+             <i data-lucide="shirt" class="w-16 h-16 text-beige-light"></i>
+        </div>
+
+        <!-- Title & Info Area -->
+        <div class="absolute w-full left-0 p-5 -bottom-24 duration-500 group-hover:-translate-y-12">
+            <div class="absolute -z-10 left-0 w-full h-28 opacity-0 duration-500 group-hover:opacity-70 group-hover:bg-rich-black/90 rounded-b-xl"></div>
+            <span class="text-xl font-bold text-beige-light">Grey Hooded Jacket</span>
+            
+            <p class="group-hover:opacity-100 w-full duration-500 opacity-0 text-sm mt-3">
+                **Location:** Gymnasium Entrance <br>
+                **Condition:** Zipper is broken at the bottom.
+            </p>
+        </div>
+    </div>
+</div>
+            </div>
+        </div>
+    </main>
+
+    <!-- AI Claim Verification Modal -->
+    <div id="claim-modal" class="fixed inset-0 bg-rich-black/90 backdrop-blur-sm hidden z-[100] flex items-center justify-center p-4">
+        <div class="bg-midnight-green text-beige-light rounded-2xl shadow-2xl w-full max-w-lg p-6 relative">
+            <button onclick="closeClaimModal()" class="absolute top-4 right-4 text-ash-gray hover:text-beige-light">
+                <i data-lucide="x" class="w-6 h-6"></i>
+            </button>
+
+            <h2 class="text-3xl font-bold border-b border-air-force-blue pb-2 mb-4">Claim Item Verification</h2>
+            <p class="text-ash-gray mb-6">
+                You are claiming: <span id="claim-item-name" class="font-semibold text-beige-light"></span>, found at <span id="claim-item-location" class="font-semibold text-beige-light"></span>.
+            </p>
+
+            <!-- Step 1: Upload Proof -->
+            <div id="claim-step-1">
+                <p class="mb-4">To successfully claim this item, please upload a picture of the **unique feature or damage** you described in your lost report.</p>
+
+                <label for="proof-picture" class="block mb-2 font-medium">Upload Proof Picture</label>
+                <input type="file" id="proof-picture" accept="image/*" class="w-full text-sm text-ash-gray file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-air-force-blue file:text-beige-light hover:file:bg-air-force-blue/80 cursor-pointer">
+
+                <button onclick="startVerification()" class="animated-button mx-auto mt-8 w-full max-w-xs">
+                    <span class="circle"></span>
+                    <span class="text">Start AI Verification</span>
+                    <svg xmlns="http://www.w3.org/2000/svg" class="arr-1" viewBox="0 0 24 24"><path d="M16.1716 10.9999L10.8076 5.63589L12.2218 4.22168L20 11.9999L12.2218 19.778L10.8076 18.3638L16.1716 12.9999H4V10.9999H16.1716Z"></path></svg>
+                    <svg xmlns="http://www.w3.org/2000/svg" class="arr-2" viewBox="0 0 24 24"><path d="M16.1716 10.9999L10.8076 5.63589L12.2218 4.22168L20 11.9999L12.2218 19.778L10.8076 18.3638L16.1716 12.9999H4V10.9999H16.1716Z"></path></svg>
+                </button>
+            </div>
+
+            <!-- Step 2: Verification In Progress -->
+            <div id="claim-step-2" class="hidden text-center py-10">
+                <div id="ai-status-icon" class="mb-4 flex justify-center"></div>
+                <p id="ai-status-text" class="text-xl font-medium"></p>
+                <p class="text-ash-gray mt-2">Please wait while the AI compares your proof picture against the reported item image.</p>
+            </div>
+
+            <!-- Step 3: Verification Success -->
+            <div id="claim-step-3" class="hidden text-center py-10">
+                <i data-lucide="check-circle" class="w-16 h-16 text-air-force-blue mx-auto mb-4"></i>
+                <h3 class="text-2xl font-bold mb-4">Verification Successful!</h3>
+                <p class="mb-6">The AI found a high match between your proof and the item's details. Your claim ticket is ready to be raised with the administrator.</p>
+                <button onclick="closeClaimModal()" class="px-6 py-3 bg-air-force-blue rounded-lg text-beige-light font-semibold hover:bg-air-force-blue/80 transition duration-300">Raise Claim Ticket</button>
+            </div>
+
+            <!-- Step 4: Verification Failure -->
+            <div id="claim-step-4" class="hidden text-center py-10">
+                <i data-lucide="x-circle" class="w-16 h-16 text-ash-gray mx-auto mb-4"></i>
+                <h3 class="text-2xl font-bold mb-4">Verification Failed</h3>
+                <p class="mb-6">The AI could not find a sufficient match. Please ensure your uploaded picture clearly shows the unique feature of the lost item.</p>
+                <button onclick="document.getElementById('claim-step-4').classList.add('hidden'); document.getElementById('claim-step-1').classList.remove('hidden');" class="px-6 py-3 bg-rich-black border border-ash-gray rounded-lg text-ash-gray font-semibold hover:bg-rich-black/80 transition duration-300">Try Again</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="cursor">
+  <div class="cursor__ball cursor__ball--big">
+    <svg height="30" width="30">
+      <circle cx="15" cy="15" r="12" stroke-width="0"></circle>
+    </svg>
+  </div>
+  
+  <div class="cursor__ball cursor__ball--small">
+    <svg height="10" width="10">
+      <circle cx="5" cy="5" r="4" stroke-width="0"></circle>
+    </svg>
+  </div>
+</div>
+</body>
+</html>
